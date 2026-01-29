@@ -1,0 +1,385 @@
+        -:    0:Source:drinks_bar.c
+        -:    0:Graph:drinks_bar.gcno
+        -:    0:Data:drinks_bar.gcda
+        -:    0:Runs:7
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <arpa/inet.h>
+        -:    6:#include <sys/socket.h>
+        -:    7:#include <sys/select.h>
+        -:    8:#include <signal.h>
+        -:    9:#include <errno.h>
+        -:   10:
+        -:   11:#define MAX_CLIENTS FD_SETSIZE
+        -:   12:#define BUFFER_SIZE 1024
+        -:   13:
+        -:   14:volatile sig_atomic_t shutdown_requested = 0;
+        -:   15:
+        1:   16:void handle_shutdown(int sig)
+        -:   17:{
+        1:   18:    shutdown_requested = 1;
+        1:   19:}
+        -:   20:
+        6:   21:unsigned long long min(unsigned long long a, unsigned long long b)
+        -:   22:{
+        6:   23:    return (a < b) ? a : b;
+        -:   24:}
+        -:   25:
+        3:   26:unsigned long long min3(unsigned long long a, unsigned long long b, unsigned long long c)
+        -:   27:{
+        3:   28:    return min(min(a, b), c);
+        -:   29:}
+        -:   30:
+        7:   31:int main(int argc, char *argv[])
+        -:   32:{
+        7:   33:    signal(SIGPIPE, SIG_IGN);
+        7:   34:    signal(SIGINT, handle_shutdown);
+        -:   35:
+        7:   36:    unsigned long long carbon = 0;
+        7:   37:    unsigned long long oxygen = 0;
+        7:   38:    unsigned long long hydrogen = 0;
+        -:   39:
+        7:   40:    if (argc != 3)
+        -:   41:    {
+        1:   42:        fprintf(stderr, "Usage: %s <tcp_port> <udp_port>\n", argv[0]);
+        1:   43:        exit(EXIT_FAILURE);
+        -:   44:    }
+        -:   45:
+        6:   46:    int tcp_port = atoi(argv[1]);
+        6:   47:    int udp_port = atoi(argv[2]);
+        -:   48:
+        6:   49:    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+        6:   50:    if (server_fd < 0)
+        -:   51:    {
+    #####:   52:        perror("TCP socket failed");
+    #####:   53:        exit(EXIT_FAILURE);
+        -:   54:    }
+        -:   55:
+        -:   56:    struct sockaddr_in address;
+        6:   57:    memset(&address, 0, sizeof(address));
+        6:   58:    address.sin_family = AF_INET;
+        6:   59:    address.sin_addr.s_addr = INADDR_ANY;
+        6:   60:    address.sin_port = htons(tcp_port);
+        -:   61:
+        6:   62:    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0)
+        -:   63:    {
+        3:   64:        perror("TCP bind failed");
+        3:   65:        close(server_fd);
+        3:   66:        exit(EXIT_FAILURE);
+        -:   67:    }
+        -:   68:
+        3:   69:    if (listen(server_fd, 5) < 0)
+        -:   70:    {
+    #####:   71:        perror("TCP listen failed");
+    #####:   72:        close(server_fd);
+    #####:   73:        exit(EXIT_FAILURE);
+        -:   74:    }
+        -:   75:
+        3:   76:    int udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+        3:   77:    if (udp_fd < 0)
+        -:   78:    {
+    #####:   79:        perror("UDP socket failed");
+    #####:   80:        close(server_fd);
+    #####:   81:        exit(EXIT_FAILURE);
+        -:   82:    }
+        -:   83:
+        -:   84:    struct sockaddr_in udp_addr;
+        3:   85:    memset(&udp_addr, 0, sizeof(udp_addr));
+        3:   86:    udp_addr.sin_family = AF_INET;
+        3:   87:    udp_addr.sin_addr.s_addr = INADDR_ANY;
+        3:   88:    udp_addr.sin_port = htons(udp_port);
+        -:   89:
+        3:   90:    if (bind(udp_fd, (struct sockaddr *)&udp_addr, sizeof(udp_addr)) < 0)
+        -:   91:    {
+    #####:   92:        perror("UDP bind failed");
+    #####:   93:        close(server_fd);
+    #####:   94:        close(udp_fd);
+    #####:   95:        exit(EXIT_FAILURE);
+        -:   96:    }
+        -:   97:
+        3:   98:    printf("Server is listening on TCP %d and UDP %d\n", tcp_port, udp_port);
+        -:   99:
+        3:  100:    int clients[MAX_CLIENTS] = {0};
+        -:  101:
+   342530:  102:    while (!shutdown_requested)
+        -:  103:    {
+        -:  104:        fd_set readfds;
+  5822959:  105:        FD_ZERO(&readfds);
+   342527:  106:        FD_SET(server_fd, &readfds);
+   342527:  107:        FD_SET(udp_fd, &readfds);
+   342527:  108:        FD_SET(STDIN_FILENO, &readfds);
+   342527:  109:        int max_fd = server_fd > udp_fd ? server_fd : udp_fd;
+   342527:  110:        if (STDIN_FILENO > max_fd)
+    #####:  111:            max_fd = STDIN_FILENO;
+        -:  112:
+351090175:  113:        for (int i = 0; i < MAX_CLIENTS; ++i)
+        -:  114:        {
+350747648:  115:            if (clients[i] > 0)
+        -:  116:            {
+    76239:  117:                FD_SET(clients[i], &readfds);
+    76239:  118:                if (clients[i] > max_fd)
+    76239:  119:                    max_fd = clients[i];
+        -:  120:            }
+        -:  121:        }
+        -:  122:
+   342527:  123:        int activity = select(max_fd + 1, &readfds, NULL, NULL, NULL);
+  342527*:  124:        if (activity < 0 && !shutdown_requested)
+        -:  125:        {
+    #####:  126:            perror("select error");
+    #####:  127:            break;
+        -:  128:        }
+        -:  129:
+   342527:  130:        if (FD_ISSET(server_fd, &readfds))
+        -:  131:        {
+        -:  132:            struct sockaddr_in client_addr;
+        6:  133:            socklen_t client_len = sizeof(client_addr);
+        6:  134:            int new_socket = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
+       6*:  135:            if (new_socket < 0)
+        -:  136:            {
+    #####:  137:                perror("accept failed");
+    #####:  138:                continue;
+        -:  139:            }
+        -:  140:
+        6:  141:            printf("New client connected: %s\n", inet_ntoa(client_addr.sin_addr));
+        -:  142:
+        7:  143:            for (int i = 0; i < MAX_CLIENTS; ++i)
+        -:  144:            {
+        7:  145:                if (clients[i] == 0)
+        -:  146:                {
+        6:  147:                    clients[i] = new_socket;
+        6:  148:                    break;
+        -:  149:                }
+        -:  150:            }
+        -:  151:        }
+        -:  152:
+   342527:  153:        if (FD_ISSET(udp_fd, &readfds))
+        -:  154:        {
+       18:  155:            char buffer[BUFFER_SIZE] = {0};
+        -:  156:            struct sockaddr_in client_addr;
+       18:  157:            socklen_t client_len = sizeof(client_addr);
+       18:  158:            int bytes_received = recvfrom(udp_fd, buffer, sizeof(buffer) - 1, 0,
+        -:  159:                                          (struct sockaddr *)&client_addr, &client_len);
+       18:  160:            if (bytes_received > 0)
+        -:  161:            {
+       18:  162:                buffer[bytes_received] = '\0';
+       18:  163:                buffer[strcspn(buffer, "\r\n")] = 0;
+        -:  164:
+        -:  165:                char action[16];
+        -:  166:                char molecule_part1[32], molecule_part2[32];
+       18:  167:                unsigned long long amount = 0;
+        -:  168:
+       18:  169:                int parsed = sscanf(buffer, "%15s %31s %31s %llu", action, molecule_part1, molecule_part2, &amount);
+        -:  170:
+       18:  171:                char molecule[64] = {0};
+        -:  172:
+       18:  173:                if (parsed == 3)
+        -:  174:                {
+        7:  175:                    strcpy(molecule, molecule_part1);
+        7:  176:                    amount = strtoull(molecule_part2, NULL, 10);
+        -:  177:                }
+        -:  178:
+       11:  179:                else if (parsed == 4)
+        -:  180:                {
+        1:  181:                    snprintf(molecule, sizeof(molecule), "%s %s", molecule_part1, molecule_part2);
+        -:  182:                }
+        -:  183:
+        -:  184:                else
+       10:  185:                {
+       10:  186:                    const char *response = "CANNOT_DELIVER";
+       10:  187:                    sendto(udp_fd, response, strlen(response), 0,
+        -:  188:                           (struct sockaddr *)&client_addr, client_len);
+       13:  189:                    continue;
+        -:  190:                }
+        -:  191:
+        8:  192:                unsigned long long need_H = 0, need_O = 0, need_C = 0;
+        -:  193:
+        8:  194:                if (strcmp(molecule, "WATER") == 0)
+        -:  195:                {
+        1:  196:                    need_H = 2 * amount;
+        1:  197:                    need_O = 1 * amount;
+        -:  198:                }
+        7:  199:                else if (strcmp(molecule, "CARBON DIOXIDE") == 0)
+        -:  200:                {
+        1:  201:                    need_C = 1 * amount;
+        1:  202:                    need_O = 2 * amount;
+        -:  203:                }
+        6:  204:                else if (strcmp(molecule, "GLUCOSE") == 0)
+        -:  205:                {
+        2:  206:                    need_C = 6 * amount;
+        2:  207:                    need_H = 12 * amount;
+        2:  208:                    need_O = 6 * amount;
+        -:  209:                }
+        4:  210:                else if (strcmp(molecule, "ALCOHOL") == 0)
+        -:  211:                {
+        1:  212:                    need_C = 2 * amount;
+        1:  213:                    need_H = 6 * amount;
+        1:  214:                    need_O = 1 * amount;
+        -:  215:                }
+        -:  216:                else
+        3:  217:                {
+        3:  218:                    const char *response = "CANNOT_DELIVER";
+        3:  219:                    sendto(udp_fd, response, strlen(response), 0,
+        -:  220:                           (struct sockaddr *)&client_addr, client_len);
+        3:  221:                    continue;
+        -:  222:                }
+        -:  223:
+        5:  224:                if (hydrogen >= need_H && oxygen >= need_O && carbon >= need_C)
+        4:  225:                {
+        4:  226:                    hydrogen -= need_H;
+        4:  227:                    oxygen -= need_O;
+        4:  228:                    carbon -= need_C;
+        -:  229:
+        4:  230:                    printf("UDP DELIVER: %s (%llu units)\n", molecule, amount);
+        4:  231:                    printf(" Atoms warehouse after delivery: H=%llu, O=%llu, C=%llu\n", hydrogen, oxygen, carbon);
+        -:  232:
+        4:  233:                    const char *response = "DELIVERED";
+        4:  234:                    sendto(udp_fd, response, strlen(response), 0,
+        -:  235:                           (struct sockaddr *)&client_addr, client_len);
+        -:  236:                }
+        -:  237:                else
+        -:  238:                {
+        1:  239:                    const char *response = "CANNOT_DELIVER";
+        1:  240:                    sendto(udp_fd, response, strlen(response), 0,
+        -:  241:                           (struct sockaddr *)&client_addr, client_len);
+        -:  242:                }
+        -:  243:            }
+        -:  244:        }
+        -:  245:
+   342514:  246:        if (FD_ISSET(STDIN_FILENO, &readfds))
+        -:  247:        {
+        -:  248:            char input[BUFFER_SIZE];
+   342514:  249:            if (fgets(input, sizeof(input), stdin))
+        -:  250:            {
+        5:  251:                input[strcspn(input, "\r\n")] = 0;
+        -:  252:                char command[32], drink[32];
+        5:  253:                if (sscanf(input, "%31s %31s", command, drink) == 2 && strcmp(command, "GEN") == 0)
+        4:  254:                {
+        4:  255:                    int can_make = 0;
+        4:  256:                    if (strcmp(drink, "SOFT") == 0 || strcmp(drink, "SOFTDRINK") == 0 || strcmp(drink, "SOFT_DRINK") == 0)
+        -:  257:                    {
+        1:  258:                        can_make = min3(hydrogen / 14, oxygen / 9, carbon / 7);
+        1:  259:                        printf("Can make %d SOFT DRINK(s)\n", can_make);
+        -:  260:                    }
+        3:  261:                    else if (strcmp(drink, "VODKA") == 0)
+        -:  262:                    {
+        1:  263:                        can_make = min3(hydrogen / 20, oxygen / 8, carbon / 8);
+        1:  264:                        printf("Can make %d VODKA(s)\n", can_make);
+        -:  265:                    }
+        2:  266:                    else if (strcmp(drink, "CHAMPAGNE") == 0)
+        -:  267:                    {
+        1:  268:                        can_make = min3(hydrogen / 8, oxygen / 4, carbon / 3);
+        1:  269:                        printf("Can make %d CHAMPAGNE(s)\n", can_make);
+        -:  270:                    }
+        -:  271:                    else
+        -:  272:                    {
+        1:  273:                        printf(" Unknown drink type.\n");
+        -:  274:                    }
+        -:  275:                }
+        -:  276:                else
+        -:  277:                {
+        1:  278:                    printf(" Invalid GEN command.\n");
+        -:  279:                }
+        -:  280:            }
+        -:  281:        }
+        -:  282:
+351074803:  283:        for (int i = 0; i < MAX_CLIENTS; ++i)
+        -:  284:        {
+350732291:  285:            int client_fd = clients[i];
+350732291:  286:            if (client_fd > 0 && FD_ISSET(client_fd, &readfds))
+        -:  287:            {
+       12:  288:                char buffer[BUFFER_SIZE] = {0};
+       12:  289:                int bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
+        -:  290:
+       12:  291:                if (bytes_received <= 0)
+        -:  292:                {
+        2:  293:                    printf(" Client disconnected.\n");
+        2:  294:                    close(client_fd);
+        2:  295:                    clients[i] = 0;
+        6:  296:                    continue;
+        -:  297:                }
+        -:  298:
+       10:  299:                buffer[strcspn(buffer, "\r\n")] = 0;
+        -:  300:
+       10:  301:                if (strcmp(buffer, "EXIT") == 0)
+        -:  302:                {
+        1:  303:                    printf(" Client requested EXIT.\n");
+        1:  304:                    close(client_fd);
+        1:  305:                    clients[i] = 0;
+        1:  306:                    continue;
+        -:  307:                }
+        -:  308:
+        9:  309:                if (strcmp(buffer, "SHUTDOWN") == 0)
+        -:  310:                {
+        2:  311:                    printf(" Shutdown command received from client.\n");
+        2:  312:                    shutdown_requested = 1;
+        2:  313:                    close(client_fd);
+        2:  314:                    clients[i] = 0;
+        2:  315:                    break;
+        -:  316:                }
+        -:  317:
+        -:  318:                char action[16], atom_type[32];
+        7:  319:                long long amount = -1;
+        -:  320:
+        7:  321:                if (sscanf(buffer, "%15s %31s %lld", action, atom_type, &amount) != 3)
+        1:  322:                {
+        1:  323:                    const char *error_msg = "ERROR: Invalid command format. Use: ADD <ATOM_TYPE> <POSITIVE_AMOUNT>\n";
+        1:  324:                    send(client_fd, error_msg, strlen(error_msg), 0);
+        1:  325:                    continue;
+        -:  326:                }
+        -:  327:
+        6:  328:                if (strcmp(action, "ADD") != 0)
+    #####:  329:                {
+    #####:  330:                    const char *error_msg = "ERROR: Unknown command. Only 'ADD' is supported.\n";
+    #####:  331:                    send(client_fd, error_msg, strlen(error_msg), 0);
+    #####:  332:                    continue;
+        -:  333:                }
+        -:  334:
+        6:  335:                if (amount <= 0)
+        1:  336:                {
+        1:  337:                    const char *error_msg = "ERROR: Amount must be a positive number greater than zero.\n";
+        1:  338:                    send(client_fd, error_msg, strlen(error_msg), 0);
+        1:  339:                    continue;
+        -:  340:                }
+        -:  341:
+        5:  342:                unsigned long long *target = NULL;
+        5:  343:                if (strcmp(atom_type, "HYDROGEN") == 0)
+        -:  344:                {
+        1:  345:                    target = &hydrogen;
+        -:  346:                }
+        4:  347:                else if (strcmp(atom_type, "OXYGEN") == 0)
+        -:  348:                {
+        2:  349:                    target = &oxygen;
+        -:  350:                }
+        2:  351:                else if (strcmp(atom_type, "CARBON") == 0)
+        -:  352:                {
+        1:  353:                    target = &carbon;
+        -:  354:                }
+        -:  355:                else
+        1:  356:                {
+        1:  357:                    const char *error_msg = "ERROR: Unknown atom type.\n";
+        1:  358:                    send(client_fd, error_msg, strlen(error_msg), 0);
+        1:  359:                    continue;
+        -:  360:                }
+        -:  361:
+        4:  362:                *target += amount;
+        4:  363:                printf(" Atoms warehouse: H=%llu, O=%llu, C=%llu\n", hydrogen, oxygen, carbon);
+        -:  364:
+        4:  365:                unsigned int response = (unsigned int)(*target);
+        4:  366:                send(client_fd, &response, sizeof(response), 0);
+        -:  367:            }
+        -:  368:        }
+        -:  369:    }
+        -:  370:
+     3075:  371:    for (int i = 0; i < MAX_CLIENTS; ++i)
+        -:  372:    {
+     3072:  373:        if (clients[i] > 0)
+        1:  374:            close(clients[i]);
+        -:  375:    }
+        3:  376:    close(server_fd);
+        3:  377:    close(udp_fd);
+        -:  378:
+        3:  379:    printf("Server shut down.....\n");
+        3:  380:    return 0;
+        -:  381:}

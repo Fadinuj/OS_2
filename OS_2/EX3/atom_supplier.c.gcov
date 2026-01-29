@@ -1,0 +1,143 @@
+        -:    0:Source:atom_supplier.c
+        -:    0:Graph:atom_supplier.gcno
+        -:    0:Data:atom_supplier.gcda
+        -:    0:Runs:8
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <arpa/inet.h>
+        -:    6:#include <sys/socket.h>
+        -:    7:#include <netdb.h>
+        -:    8:
+        -:    9:#define BUFFER_SIZE 1024
+        -:   10:
+        8:   11:int main(int argc, char *argv[])
+        -:   12:{
+        -:   13:
+        8:   14:    if (argc != 3)
+        -:   15:    {
+        1:   16:        fprintf(stderr, "Usage: %s <host> <port>\n", argv[0]);
+        1:   17:        return 1;
+        -:   18:    }
+        -:   19:
+        7:   20:    const char *server_ip = argv[1];
+        7:   21:    const char *port_str = argv[2];
+        -:   22:
+        -:   23:    struct addrinfo hints, *res;
+        7:   24:    memset(&hints, 0, sizeof(hints));
+        7:   25:    hints.ai_family = AF_INET;       // IPv4
+        7:   26:    hints.ai_socktype = SOCK_STREAM; // TCP
+        -:   27:
+        7:   28:    int status = getaddrinfo(server_ip, port_str, &hints, &res);
+        7:   29:    if (status != 0)
+        -:   30:    {
+    #####:   31:        fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
+    #####:   32:        return 1;
+        -:   33:    }
+        -:   34:
+        7:   35:    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+        7:   36:    if (sock < 0)
+        -:   37:    {
+    #####:   38:        perror("socket failed");
+    #####:   39:        freeaddrinfo(res);
+    #####:   40:        return 1;
+        -:   41:    }
+        -:   42:
+        7:   43:    if (connect(sock, res->ai_addr, res->ai_addrlen) < 0)
+        -:   44:    {
+    #####:   45:        perror("Connection failed");
+    #####:   46:        freeaddrinfo(res);
+    #####:   47:        close(sock);
+    #####:   48:        return 1;
+        -:   49:    }
+        -:   50:
+        7:   51:    printf("Connected to server at %s:%s\n", server_ip, port_str);
+        7:   52:    freeaddrinfo(res);
+        -:   53:
+        -:   54:    char buffer[BUFFER_SIZE];
+        -:   55:
+        -:   56:    while (1)
+       10:   57:    {
+       17:   58:        printf("Enter command ADD CARBON , OXYGEN , HYDROGEN: ");
+       17:   59:        fflush(stdout);
+        -:   60:
+       17:   61:        if (fgets(buffer, sizeof(buffer), stdin) == NULL)
+        -:   62:        {
+        3:   63:            printf("Error reading input\n");
+        3:   64:            break;
+        -:   65:        }
+        -:   66:
+       14:   67:        buffer[strcspn(buffer, "\r\n")] = 0;
+        -:   68:
+       14:   69:        if (strcmp(buffer, "EXIT") == 0)
+        -:   70:        {
+        2:   71:            send(sock, buffer, strlen(buffer), 0);
+        2:   72:            printf("send EXIT to server- client requests to disconnect\n");
+        2:   73:            break;
+        -:   74:        }
+        -:   75:
+       12:   76:        if (strcmp(buffer, "SHUTDOWN") == 0)
+        -:   77:        {
+        2:   78:            send(sock, buffer, strlen(buffer), 0);
+        2:   79:            printf("Sent %s. Closing client.\n", buffer);
+        2:   80:            break;
+        -:   81:        }
+        -:   82:
+       10:   83:        char atom_type[32] = "";
+        -:   84:        long long dummy_amount;
+        -:   85:        char dummy_action[16];
+        -:   86:
+        -:   87:        // שליחת הפקודה לשרת
+       10:   88:        ssize_t bytes_sent = send(sock, buffer, strlen(buffer), 0);
+       10:   89:        if (bytes_sent < 0)
+        -:   90:        {
+    #####:   91:            perror("Send failed");
+    #####:   92:            break;
+        -:   93:        }
+        -:   94:
+        -:   95:        // בדיקה אם הפקודה תקינה
+       10:   96:        if (sscanf(buffer, "%15s %31s %lld", dummy_action, atom_type, &dummy_amount) == 3 &&
+        9:   97:            strcmp(dummy_action, "ADD") == 0 && dummy_amount > 0)
+        8:   98:        {
+        -:   99:            // פקודה תקינה - מצפים לקבל unsigned int
+        8:  100:            char response_buffer[BUFFER_SIZE] = {0};
+        8:  101:            ssize_t bytes_received = recv(sock, response_buffer, sizeof(response_buffer) - 1, 0);
+        8:  102:            if (bytes_received <= 0)
+        -:  103:            {
+    #####:  104:                fprintf(stderr, "Failed to receive response from server\n");
+    #####:  105:                break;
+        -:  106:            }
+        8:  107:            response_buffer[bytes_received] = '\0';
+        -:  108:
+        -:  109:            // בדיקה אם התשובה היא טקסט שמתחיל ב־"ERROR"
+        8:  110:            if (strncmp(response_buffer, "ERROR", 5) == 0)
+        -:  111:            {
+        1:  112:                printf("Server error: %s", response_buffer);
+        -:  113:            }
+        -:  114:            else
+        -:  115:            {
+        -:  116:                // אחרת נניח שזה מספר בינארי
+        7:  117:                unsigned int response = 0;
+        7:  118:                memcpy(&response, response_buffer, sizeof(unsigned int));
+        7:  119:                printf("Server returned count: %s = %u\n", atom_type, response);
+        -:  120:            }
+        -:  121:          }
+        -:  122:          
+        -:  123:
+        -:  124:            else
+        -:  125:            {
+        2:  126:                char error_buffer[BUFFER_SIZE] = {0};
+        2:  127:                ssize_t bytes_received = recv(sock, error_buffer, sizeof(error_buffer) - 1, 0);
+        2:  128:                if (bytes_received <= 0)
+        -:  129:                {
+    #####:  130:                    fprintf(stderr, "Failed to receive error message from server\n");
+    #####:  131:                    break;
+        -:  132:                }
+        2:  133:                error_buffer[bytes_received] = '\0';
+        2:  134:                printf("Server error: %s", error_buffer);
+        -:  135:            }
+        -:  136:        }
+        7:  137:        close(sock);
+        7:  138:        return 0;
+        -:  139:    }

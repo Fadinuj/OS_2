@@ -1,0 +1,223 @@
+        -:    0:Source:atom_warehouse.c
+        -:    0:Graph:server-atom_warehouse.gcno
+        -:    0:Data:server-atom_warehouse.gcda
+        -:    0:Runs:3
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <arpa/inet.h>
+        -:    6:#include <sys/socket.h>
+        -:    7:#include <sys/select.h>
+        -:    8:#include <signal.h>
+        -:    9:#include <errno.h>
+        -:   10:
+        -:   11:#define MAX_CLIENTS FD_SETSIZE //  Default size at which select() can track maximum number of open files.
+        -:   12:#define BUFFER_SIZE 1024
+        -:   13:
+        -:   14:volatile sig_atomic_t shutdown_requested = 0; // When a SIGINT signal arrives (for example, pressing Ctrl+C), the server will know to terminate execution.
+        -:   15:
+        1:   16:void handle_shutdown(int sig)
+        -:   17:{
+        1:   18:    shutdown_requested = 1;
+        1:   19:}
+        -:   20:
+        3:   21:int main(int argc, char *argv[])
+        -:   22:{
+        3:   23:    signal(SIGPIPE, SIG_IGN);
+        3:   24:    signal(SIGINT, handle_shutdown);
+        -:   25:
+        -:   26:    // Variables that represent the amount of atoms in the warehouse.
+        3:   27:    unsigned long long carbon = 0;
+        3:   28:    unsigned long long oxygen = 0;
+        3:   29:    unsigned long long hydrogen = 0;
+        -:   30:
+        -:   31:    // Check that when running the server, exactly one argument was sent.
+        3:   32:    if (argc != 2)
+        -:   33:    {
+        1:   34:        fprintf(stderr, "usage: %s <port>\n", argv[0]);
+        1:   35:        exit(EXIT_FAILURE);
+        -:   36:    }
+        -:   37:
+        2:   38:    int port = atoi(argv[1]);
+        -:   39:
+        -:   40:    // create TCP
+        -:   41:
+        2:   42:    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+        2:   43:    if (server_fd < 0)
+        -:   44:    {
+    #####:   45:        perror("socket failed");
+    #####:   46:        exit(EXIT_FAILURE);
+        -:   47:    }
+        -:   48:
+        -:   49:    struct sockaddr_in address;
+        2:   50:    memset(&address, 0, sizeof(address));
+        2:   51:    address.sin_family = AF_INET;
+        2:   52:    address.sin_addr.s_addr = INADDR_ANY;
+        2:   53:    address.sin_port = htons(port);
+        -:   54:
+        2:   55:    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0)
+        -:   56:    {
+    #####:   57:        perror("bind failed");
+    #####:   58:        close(server_fd);
+    #####:   59:        exit(EXIT_FAILURE);
+        -:   60:    }
+        -:   61:
+        2:   62:    if (listen(server_fd, 5) < 0)
+        -:   63:    {
+    #####:   64:        perror("listen failed");
+    #####:   65:        close(server_fd);
+    #####:   66:        exit(EXIT_FAILURE);
+        -:   67:    }
+        -:   68:
+        2:   69:    printf("Server is listening on port %d\n", port);
+        -:   70:
+        2:   71:    int clients[MAX_CLIENTS] = {0};
+        -:   72:
+       34:   73:    while (!shutdown_requested)
+        -:   74:    {
+        -:   75:        fd_set readfds;
+      544:   76:        FD_ZERO(&readfds);
+       32:   77:        FD_SET(server_fd, &readfds);
+       32:   78:        int max_fd = server_fd;
+        -:   79:
+    32800:   80:        for (int i = 0; i < MAX_CLIENTS; ++i)
+        -:   81:        {
+    32768:   82:            if (clients[i] > 0)
+        -:   83:            {
+       25:   84:                FD_SET(clients[i], &readfds);
+       25:   85:                if (clients[i] > max_fd)
+       25:   86:                    max_fd = clients[i];
+        -:   87:            }
+        -:   88:        }
+        -:   89:
+       32:   90:        int activity = select(max_fd + 1, &readfds, NULL, NULL, NULL);
+       32:   91:        if (activity < 0 && !shutdown_requested)
+        -:   92:        {
+    #####:   93:            perror("select error");
+    #####:   94:            break;
+        -:   95:        }
+        -:   96:
+       32:   97:        if (FD_ISSET(server_fd, &readfds))
+        -:   98:        {
+        -:   99:            struct sockaddr_in client_addr;
+        7:  100:            socklen_t client_len = sizeof(client_addr);
+        7:  101:            int new_socket = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
+       7*:  102:            if (new_socket < 0)
+        -:  103:            {
+    #####:  104:                perror("accept failed");
+    #####:  105:                continue;
+        -:  106:            }
+        -:  107:
+        7:  108:            printf("New client connected: %s\n", inet_ntoa(client_addr.sin_addr));
+        -:  109:
+       7*:  110:            for (int i = 0; i < MAX_CLIENTS; ++i)
+        -:  111:            {
+        7:  112:                if (clients[i] == 0)
+        -:  113:                {
+        7:  114:                    clients[i] = new_socket;
+        7:  115:                    break;
+        -:  116:                }
+        -:  117:            }
+        -:  118:        }
+        -:  119:
+    31776:  120:        for (int i = 0; i < MAX_CLIENTS; ++i)
+        -:  121:        {
+    31745:  122:            int client_fd = clients[i];
+    31745:  123:            if (client_fd > 0 && FD_ISSET(client_fd, &readfds))
+        -:  124:            {
+       25:  125:                char buffer[BUFFER_SIZE] = {0};
+       25:  126:                int bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
+        -:  127:
+       25:  128:                if (bytes_received <= 0)
+        -:  129:                {
+        3:  130:                    printf("Client disconnected.\n");
+        3:  131:                    close(client_fd);
+        3:  132:                    clients[i] = 0;
+       18:  133:                    continue;
+        -:  134:                }
+        -:  135:
+       22:  136:                if (strcmp(buffer, "EXIT") == 0)
+        -:  137:                {
+        2:  138:                    printf("Client requested EXIT.\n");
+        2:  139:                    close(client_fd);
+        2:  140:                    clients[i] = 0;
+        2:  141:                    continue;
+        -:  142:                }
+        -:  143:
+       20:  144:                buffer[strcspn(buffer, "\r\n")] = 0;
+        -:  145:
+       20:  146:                if (strcmp(buffer, "SHUTDOWN") == 0)
+        -:  147:                {
+        1:  148:                    printf("Shutdown\n");
+        1:  149:                    shutdown_requested = 1;
+        1:  150:                    close(client_fd);
+        1:  151:                    clients[i] = 0;
+        1:  152:                    break;
+        -:  153:                }
+        -:  154:
+        -:  155:                char action[16], atom_type[32];
+       19:  156:                long long amount = -1;
+        -:  157:
+       19:  158:                if (sscanf(buffer, "%15s %31s %lld", action, atom_type, &amount) != 3)
+        5:  159:                {
+        5:  160:                    unsigned int status = 0; 
+        5:  161:                    send(client_fd, &status, sizeof(status), 0);
+        5:  162:                    const char *error_msg = "Error: Invalid format. Use: ADD <ATOM_TYPE> <POSITIVE_AMOUNT>";
+        5:  163:                    send(client_fd, error_msg, strlen(error_msg) + 1, 0); 
+        5:  164:                    continue;
+        -:  165:                }
+        -:  166:
+       14:  167:                if (strcmp(action, "ADD") != 0 || amount <= 0)
+        5:  168:                {
+        5:  169:                    unsigned int status = 0; 
+        5:  170:                    send(client_fd, &status, sizeof(status), 0);
+        5:  171:                    const char *error_msg = "Error: Invalid operation or negative/zero amount. Use: ADD <ATOM_TYPE> <POSITIVE_AMOUNT>";
+        5:  172:                    send(client_fd, error_msg, strlen(error_msg) + 1, 0);
+        5:  173:                    continue;
+        -:  174:                }
+        -:  175:
+        9:  176:                unsigned long long *target = NULL;
+        9:  177:                if (strcmp(atom_type, "HYDROGEN") == 0)
+        -:  178:                {
+        2:  179:                    target = &hydrogen;
+        -:  180:                }
+        7:  181:                else if (strcmp(atom_type, "OXYGEN") == 0)
+        -:  182:                {
+        2:  183:                    target = &oxygen;
+        -:  184:                }
+        5:  185:                else if (strcmp(atom_type, "CARBON") == 0)
+        -:  186:                {
+        2:  187:                    target = &carbon;
+        -:  188:                }
+        -:  189:                else
+        3:  190:                {
+        3:  191:                    unsigned int status = 0; 
+        3:  192:                    send(client_fd, &status, sizeof(status), 0);
+        3:  193:                    const char *error_msg = "Error: Invalid atom type. Use only: HYDROGEN, OXYGEN, or CARBON";
+        3:  194:                    send(client_fd, error_msg, strlen(error_msg) + 1, 0);
+        3:  195:                    continue;
+        -:  196:                }
+        -:  197:
+        -:  198:            
+        6:  199:                *target += (unsigned long long)amount;
+        6:  200:                printf("Atoms warehouse: H=%llu, O=%llu, C=%llu\n", hydrogen, oxygen, carbon);
+        -:  201:
+        6:  202:                unsigned int status = 1; 
+        6:  203:                send(client_fd, &status, sizeof(status), 0);
+        6:  204:                unsigned int response = (unsigned int)(*target);
+        6:  205:                send(client_fd, &response, sizeof(response), 0);
+        -:  206:            }
+        -:  207:        }
+        -:  208:    }
+        -:  209:
+     2050:  210:        for (int i = 0; i < MAX_CLIENTS; ++i)
+        -:  211:        {
+     2048:  212:            if (clients[i] > 0)
+        1:  213:                close(clients[i]);
+        -:  214:        }
+        2:  215:        close(server_fd);
+        2:  216:        printf("Server shut down.....\n");
+        -:  217:
+        2:  218:        return 0;
+        -:  219:    }

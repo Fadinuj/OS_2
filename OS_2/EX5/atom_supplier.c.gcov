@@ -1,0 +1,296 @@
+        -:    0:Source:atom_supplier.c
+        -:    0:Graph:atom_supplier.gcno
+        -:    0:Data:atom_supplier.gcda
+        -:    0:Runs:24
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <getopt.h>
+        -:    6:#include <arpa/inet.h>
+        -:    7:#include <sys/socket.h>
+        -:    8:#include <sys/un.h>
+        -:    9:#include <netdb.h>
+        -:   10:
+        -:   11:#define BUFFER_SIZE 1024
+        -:   12:
+        2:   13:void print_usage(const char *program_name)
+        -:   14:{
+        2:   15:    fprintf(stderr, "Usage:\n");
+        2:   16:    fprintf(stderr, "  TCP: %s -h <host> -p <port>\n", program_name);
+        2:   17:    fprintf(stderr, "  UDS: %s -f <socket_path>\n", program_name);
+        2:   18:    fprintf(stderr, "Options:\n");
+        2:   19:    fprintf(stderr, "  -h, --host <host>         Connect to TCP server at host\n");
+        2:   20:    fprintf(stderr, "  -p, --port <port>         Connect to TCP server at port\n");
+        2:   21:    fprintf(stderr, "  -f, --socket <path>       Connect to UDS server at socket path\n");
+        2:   22:    fprintf(stderr, "  --help                    Show this help message\n");
+        2:   23:}
+        -:   24:
+        8:   25:int connect_tcp(const char *host, const char *port_str)
+        -:   26:{
+        -:   27:    struct addrinfo hints, *res;
+        8:   28:    memset(&hints, 0, sizeof(hints));
+        8:   29:    hints.ai_family = AF_INET;
+        8:   30:    hints.ai_socktype = SOCK_STREAM;
+        -:   31:
+        8:   32:    int status = getaddrinfo(host, port_str, &hints, &res);
+        8:   33:    if (status != 0)
+        -:   34:    {
+    #####:   35:        fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
+    #####:   36:        return -1;
+        -:   37:    }
+        -:   38:
+        8:   39:    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+        8:   40:    if (sock < 0)
+        -:   41:    {
+    #####:   42:        perror("TCP socket failed");
+    #####:   43:        freeaddrinfo(res);
+    #####:   44:        return -1;
+        -:   45:    }
+        -:   46:
+        8:   47:    if (connect(sock, res->ai_addr, res->ai_addrlen) < 0)
+        -:   48:    {
+    #####:   49:        perror("TCP connection failed");
+    #####:   50:        freeaddrinfo(res);
+    #####:   51:        close(sock);
+    #####:   52:        return -1;
+        -:   53:    }
+        -:   54:
+        8:   55:    printf("Connected to TCP server at %s:%s\n", host, port_str);
+        8:   56:    freeaddrinfo(res);
+        8:   57:    return sock;
+        -:   58:}
+        -:   59:
+       14:   60:int connect_uds(const char *socket_path)
+        -:   61:{
+       14:   62:    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+       14:   63:    if (sock < 0)
+        -:   64:    {
+    #####:   65:        perror("UDS socket failed");
+    #####:   66:        return -1;
+        -:   67:    }
+        -:   68:
+        -:   69:    struct sockaddr_un server_addr;
+       14:   70:    memset(&server_addr, 0, sizeof(server_addr));
+       14:   71:    server_addr.sun_family = AF_UNIX;
+        -:   72:
+       14:   73:    if (strlen(socket_path) >= sizeof(server_addr.sun_path))
+        -:   74:    {
+    #####:   75:        fprintf(stderr, "Socket path too long: %s\n", socket_path);
+    #####:   76:        close(sock);
+    #####:   77:        return -1;
+        -:   78:    }
+        -:   79:
+       14:   80:    strncpy(server_addr.sun_path, socket_path, sizeof(server_addr.sun_path) - 1);
+        -:   81:
+       14:   82:    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+        -:   83:    {
+    #####:   84:        perror("UDS connection failed");
+    #####:   85:        close(sock);
+    #####:   86:        return -1;
+        -:   87:    }
+        -:   88:
+       14:   89:    printf("Connected to UDS server at %s\n", socket_path);
+       14:   90:    return sock;
+        -:   91:}
+        -:   92:
+       24:   93:int main(int argc, char *argv[])
+        -:   94:{
+       24:   95:    char *host = NULL;
+       24:   96:    char *port_str = NULL;
+       24:   97:    char *socket_path = NULL;
+        -:   98:
+        -:   99:    static struct option long_options[] = {
+        -:  100:        {"host", required_argument, 0, 'h'},
+        -:  101:        {"port", required_argument, 0, 'p'},
+        -:  102:        {"socket", required_argument, 0, 'f'},
+        -:  103:        {"help", no_argument, 0, '?'},
+        -:  104:        {0, 0, 0, 0}};
+        -:  105:
+        -:  106:    int opt;
+       54:  107:    while ((opt = getopt_long(argc, argv, "h:p:f:", long_options, NULL)) != -1)
+        -:  108:    {
+       32:  109:        switch (opt)
+        -:  110:        {
+        8:  111:        case 'h':
+        8:  112:            host = optarg;
+        8:  113:            break;
+        8:  114:        case 'p':
+        8:  115:            port_str = optarg;
+        8:  116:            break;
+       14:  117:        case 'f':
+       14:  118:            socket_path = optarg;
+       14:  119:            break;
+        2:  120:        case '?':
+        -:  121:        default:
+        2:  122:            print_usage(argv[0]);
+        2:  123:            return 1;
+        -:  124:        }
+        -:  125:    }
+        -:  126:
+        -:  127:    // Validate arguments
+       22:  128:    int tcp_mode = (host != NULL && port_str != NULL);
+       22:  129:    int uds_mode = (socket_path != NULL);
+        -:  130:
+       22:  131:    if (!tcp_mode && !uds_mode)
+        -:  132:    {
+    #####:  133:        fprintf(stderr, "Error: Must specify either TCP (-h and -p) or UDS (-f) connection.\n\n");
+    #####:  134:        print_usage(argv[0]);
+    #####:  135:        return 1;
+        -:  136:    }
+        -:  137:
+       22:  138:    if (tcp_mode && uds_mode)
+        -:  139:    {
+    #####:  140:        fprintf(stderr, "Error: Cannot specify both TCP and UDS connections simultaneously.\n\n");
+    #####:  141:        print_usage(argv[0]);
+    #####:  142:        return 1;
+        -:  143:    }
+        -:  144:
+       22:  145:    if (tcp_mode && (!host || !port_str))
+        -:  146:    {
+    #####:  147:        fprintf(stderr, "Error: For TCP connection, both -h <host> and -p <port> are required.\n\n");
+    #####:  148:        print_usage(argv[0]);
+    #####:  149:        return 1;
+        -:  150:    }
+        -:  151:
+        -:  152:    // Establish connection
+       22:  153:    int sock = -1;
+       22:  154:    if (tcp_mode)
+        -:  155:    {
+        8:  156:        sock = connect_tcp(host, port_str);
+        -:  157:    }
+       14:  158:    else if (uds_mode)
+        -:  159:    {
+       14:  160:        sock = connect_uds(socket_path);
+        -:  161:    }
+        -:  162:
+       22:  163:    if (sock < 0)
+        -:  164:    {
+    #####:  165:        fprintf(stderr, "Failed to establish connection.\n");
+    #####:  166:        return 1;
+        -:  167:    }
+        -:  168:
+        -:  169:    char buffer[BUFFER_SIZE];
+        -:  170:
+       22:  171:    printf("Connection established. You can now send commands.\n");
+       22:  172:    printf("Available commands:\n");
+       22:  173:    printf("  ADD HYDROGEN <amount>   - Add hydrogen atoms\n");
+       22:  174:    printf("  ADD OXYGEN <amount>     - Add oxygen atoms\n");
+       22:  175:    printf("  ADD CARBON <amount>     - Add carbon atoms\n");
+       22:  176:    printf("  EXIT                    - Disconnect from server\n");
+       22:  177:    printf("  SHUTDOWN                - Shutdown server\n\n");
+        -:  178:
+        -:  179:    while (1)
+       33:  180:    {
+       55:  181:        printf("Enter command: ");
+       55:  182:        fflush(stdout);
+        -:  183:
+       55:  184:        if (fgets(buffer, sizeof(buffer), stdin) == NULL)
+        -:  185:        {
+        7:  186:            printf("Error reading input or EOF reached\n");
+        7:  187:            break;
+        -:  188:        }
+        -:  189:
+       48:  190:        buffer[strcspn(buffer, "\r\n")] = 0;
+        -:  191:
+        -:  192:        // Handle empty input
+      48*:  193:        if (strlen(buffer) == 0)
+        -:  194:        {
+       1*:  195:            continue;
+        -:  196:        }
+        -:  197:
+       48:  198:        if (strcmp(buffer, "EXIT") == 0)
+        -:  199:        {
+       11:  200:            send(sock, buffer, strlen(buffer), 0);
+       11:  201:            printf("Sent EXIT to server - client requests to disconnect\n");
+       11:  202:            break;
+        -:  203:        }
+        -:  204:
+       37:  205:        if (strcmp(buffer, "SHUTDOWN") == 0)
+        -:  206:        {
+        4:  207:            send(sock, buffer, strlen(buffer), 0);
+        4:  208:            printf("Sent %s. Closing client.\n", buffer);
+        4:  209:            break;
+        -:  210:        }
+        -:  211:
+        -:  212:        // Parse and validate ADD command
+       33:  213:        char atom_type[32] = "";
+        -:  214:        long long amount;
+        -:  215:        char action[16];
+        -:  216:
+       33:  217:        if (sscanf(buffer, "%15s %31s %lld", action, atom_type, &amount) == 3 &&
+       32:  218:            strcmp(action, "ADD") == 0 && amount > 0)
+       30:  219:        {
+        -:  220:            // Validate atom type
+       31:  221:            if (strcmp(atom_type, "HYDROGEN") != 0 &&
+       18:  222:                strcmp(atom_type, "OXYGEN") != 0 &&
+        5:  223:                strcmp(atom_type, "CARBON") != 0)
+        -:  224:            {
+        1:  225:                printf("Error: Invalid atom type '%s'. Valid types: HYDROGEN, OXYGEN, CARBON\n", atom_type);
+        1:  226:                continue;
+        -:  227:            }
+        -:  228:
+       30:  229:            ssize_t bytes_sent = send(sock, buffer, strlen(buffer), 0);
+       30:  230:            if (bytes_sent < 0)
+        -:  231:            {
+    #####:  232:                perror("Send failed");
+    #####:  233:                break;
+        -:  234:            }
+        -:  235:
+        -:  236:            // Expect a binary response (unsigned int) for valid ADD commands
+       30:  237:            char response_buffer[BUFFER_SIZE] = {0};
+       30:  238:            ssize_t bytes_received = recv(sock, response_buffer, sizeof(response_buffer) - 1, 0);
+        -:  239:
+       30:  240:            if (bytes_received <= 0)
+        -:  241:            {
+    #####:  242:                perror("Failed to receive response from server");
+    #####:  243:                break;
+        -:  244:            }
+        -:  245:
+       30:  246:            if (bytes_received == sizeof(unsigned int))
+        -:  247:            {
+       30:  248:                unsigned int response = 0;
+       30:  249:                memcpy(&response, response_buffer, sizeof(unsigned int));
+       30:  250:                printf("Server returned count: %s = %u\n", atom_type, response);
+        -:  251:            }
+        -:  252:            else
+        -:  253:            {
+    #####:  254:                response_buffer[bytes_received] = '\0';
+    #####:  255:                printf("Server error: %s", response_buffer);
+        -:  256:            }
+        -:  257:        }
+        -:  258:
+        -:  259:            else
+        -:  260:            {
+        -:  261:                // Send invalid command and expect text error response
+        2:  262:                ssize_t bytes_sent = send(sock, buffer, strlen(buffer), 0);
+        2:  263:                if (bytes_sent < 0)
+        -:  264:                {
+    #####:  265:                    perror("Send failed");
+    #####:  266:                    break;
+        -:  267:                }
+        -:  268:
+        2:  269:                char error_response[BUFFER_SIZE] = {0};
+        2:  270:                ssize_t bytes_received = recv(sock, error_response, sizeof(error_response) - 1, 0);
+        2:  271:                if (bytes_received > 0)
+        -:  272:                {
+        2:  273:                    error_response[bytes_received] = '\0';
+        2:  274:                    printf("Server response: %s", error_response);
+        -:  275:                }
+    #####:  276:                else if (bytes_received == 0)
+        -:  277:                {
+    #####:  278:                    printf("Server closed connection.\n");
+    #####:  279:                    break;
+        -:  280:                }
+        -:  281:                else
+        -:  282:                {
+    #####:  283:                    perror("Failed to receive response from server");
+    #####:  284:                    break;
+        -:  285:                }
+        -:  286:            }
+        -:  287:        }
+        -:  288:
+       22:  289:        close(sock);
+       22:  290:        printf("Connection closed.\n");
+       22:  291:        return 0;
+        -:  292:    }

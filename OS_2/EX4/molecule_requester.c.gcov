@@ -1,0 +1,87 @@
+        -:    0:Source:molecule_requester.c
+        -:    0:Graph:molecule_requester.gcno
+        -:    0:Data:molecule_requester.gcda
+        -:    0:Runs:11
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <getopt.h>
+        -:    6:#include <arpa/inet.h>
+        -:    7:
+        -:    8:#define BUFFER_SIZE 1024
+        -:    9:
+       11:   10:int main(int argc, char *argv[]) {
+       11:   11:    char *server_ip = NULL;
+       11:   12:    int port = -1;
+        -:   13:
+        -:   14:    int opt;
+       29:   15:    while ((opt = getopt(argc, argv, "h:p:")) != -1) {
+       19:   16:        switch (opt) {
+        9:   17:            case 'h':
+        9:   18:                server_ip = optarg;
+        9:   19:                break;
+        9:   20:            case 'p':
+        9:   21:                port = atoi(optarg);
+        9:   22:                break;
+        1:   23:            default:
+        1:   24:                fprintf(stderr, "Usage: %s -h <server_ip> -p <port>\n", argv[0]);
+        1:   25:                exit(EXIT_FAILURE);
+        -:   26:        }
+        -:   27:    }
+        -:   28:
+       10:   29:    if (!server_ip || port <= 0) {
+        1:   30:        fprintf(stderr, "Error: both -h <server_ip> and -p <port> are required.\n");
+        1:   31:        exit(EXIT_FAILURE);
+        -:   32:    }
+        -:   33:
+        -:   34:
+        9:   35:    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+        9:   36:    if (sockfd < 0) {
+    #####:   37:        perror("socket failed");
+    #####:   38:        exit(EXIT_FAILURE);
+        -:   39:    }
+        -:   40:
+        -:   41:    struct sockaddr_in server_addr;
+        9:   42:    memset(&server_addr, 0, sizeof(server_addr));
+        9:   43:    server_addr.sin_family = AF_INET;
+        9:   44:    server_addr.sin_port = htons(port);
+        9:   45:    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+    #####:   46:        perror("invalid address");
+    #####:   47:        exit(EXIT_FAILURE);
+        -:   48:    }
+        -:   49:
+        -:   50:    char input[BUFFER_SIZE];
+        -:   51:    char response[BUFFER_SIZE];
+        -:   52:
+        9:   53:    printf("Enter DELIVER commands (e.g., DELIVER WATER 2), or type EXIT to quit:\n");
+        -:   54:
+       21:   55:    while (1) {
+       30:   56:        printf("> ");
+       30:   57:        if (!fgets(input, sizeof(input), stdin)) break;
+        -:   58:
+       22:   59:        input[strcspn(input, "\r\n")] = 0;
+        -:   60:
+       22:   61:        if (strcmp(input, "EXIT") == 0) break;
+        -:   62:
+      21*:   63:        if (sendto(sockfd, input, strlen(input), 0,
+        -:   64:                   (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    #####:   65:            perror("sendto failed");
+    #####:   66:            continue;
+        -:   67:        }
+        -:   68:
+       21:   69:        socklen_t addrlen = sizeof(server_addr);
+       21:   70:        int bytes_received = recvfrom(sockfd, response, sizeof(response) - 1, 0,
+        -:   71:                                      (struct sockaddr *)&server_addr, &addrlen);
+      21*:   72:        if (bytes_received < 0) {
+    #####:   73:            perror("recvfrom failed");
+    #####:   74:            continue;
+        -:   75:        }
+        -:   76:
+       21:   77:        response[bytes_received] = '\0';
+       21:   78:        printf("Server response: %s\n", response);
+        -:   79:    }
+        -:   80:
+        9:   81:    close(sockfd);
+        9:   82:    return 0;
+        -:   83:}
